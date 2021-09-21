@@ -1,0 +1,61 @@
+{
+	"total_pipeline_operations": [
+		"lagged",
+		"rfr"
+	],
+	"depth": 2,
+	"nodes": [
+		{
+			"operation_id": 1,
+			"operation_type": "lagged",
+			"operation_name": "LaggedTransformationImplementation",
+			"custom_params": {
+				"window_size": 10
+			},
+			"params": {
+				"window_size": 10
+			},
+			"nodes_from": [],
+			"fitted_operation_path": "fitted_operations\\operation_1.pkl",
+			"rating": null
+		},
+		{
+			"operation_id": 0,
+			"operation_type": "rfr",
+			"operation_name": "RandomForestRegressor",
+			"custom_params": {
+				"n_estimators": 100,
+				"max_features": 0.3245577158030577,
+				"min_samples_split": 10,
+				"min_samples_leaf": 2,
+				"bootstrap": false
+			},
+			"params": {
+				"bootstrap": false,
+				"ccp_alpha": 0.0,
+				"criterion": "mse",
+				"max_depth": null,
+				"max_features": 0.3245577158030577,
+				"max_leaf_nodes": null,
+				"max_samples": null,
+				"min_impurity_decrease": 0.0,
+				"min_impurity_split": null,
+				"min_samples_leaf": 2,
+				"min_samples_split": 10,
+				"min_weight_fraction_leaf": 0.0,
+				"n_estimators": 100,
+				"n_jobs": null,
+				"oob_score": false,
+				"random_state": null,
+				"verbose": 0,
+				"warm_start": false
+			},
+			"nodes_from": [
+				1
+			],
+			"fitted_operation_path": "fitted_operations\\operation_0.pkl",
+			"rating": null
+		}
+	],
+	"descriptive_id": "(/n_lagged_{'window_size': 10};)/n_rfr_{'n_estimators': 100, 'max_features': 0.3245577158030577, 'min_samples_split': 10, 'min_samples_leaf': 2, 'bootstrap': False}"
+}
