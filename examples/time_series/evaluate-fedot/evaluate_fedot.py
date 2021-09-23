@@ -4,6 +4,7 @@ import os
 import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
+from sklearn.metrics import mean_squared_error, mean_absolute_error
 
 from examples.time_series.ts_forecasting_composing import plot_results
 from fedot.api.main import Fedot
@@ -39,8 +40,9 @@ def prepare_data(task, label="GS10", shift=0):
 
 
 def create_plot(actual_time_series, predicted_values, len_train_data, y_name='Sea surface height, m'):
-    fig = plt.figure(figsize=(20, 50))
+    fig = plt.figure(figsize=(50, 20))
     ax = fig.add_subplot(111)
+    ax.grid()
     ax.plot(np.arange(0, len(actual_time_series)),
             actual_time_series, label='Actual values', c='green')
     ax.plot(np.arange(len_train_data, len_train_data + len(predicted_values)),
@@ -50,18 +52,22 @@ def create_plot(actual_time_series, predicted_values, len_train_data, y_name='Se
     ax.plot([len_train_data, len_train_data],
             [min(actual_time_series), max(actual_time_series)], c='black',
             linewidth=1)
-    ax.set_xlabel(y_name, fontsize=15)
-    ax.set_ylabel('Time index', fontsize=15)
+    ax.set_ylabel(y_name, fontsize=15)
+    ax.set_xlabel('Time index', fontsize=15)
     ax.legend(fontsize=15)
     return fig
 
 
-def save_results(label, observed_data, predicted, target, pipeline, fig):
-    new_dir = f"{label}_{len(target)}_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
+def save_results(label, observed_data, predicted, target, pipeline, fig, shift):
+    new_dir = f"{label}_horizon-{len(target)}_shift-{shift}_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
     os.mkdir(new_dir)
     np.savetxt(os.path.join(new_dir, "observed_data.txt"), observed_data)
     np.savetxt(os.path.join(new_dir, "predicted_data.txt"), predicted)
     np.savetxt(os.path.join(new_dir, "real_target.txt"), target)
+    rmse_value = mean_squared_error(target, predicted, squared=False)
+    mae_value = mean_absolute_error(target, predicted)
+    with open(os.path.join(new_dir, "metrics.txt"), "w+") as f:
+        f.write(f"RMSE: {rmse_value}\nMAE: {mae_value}")
 
     pipeline.save(os.path.join(new_dir, "pipeline"))
     fig.savefig(os.path.join(new_dir, "plot.svg"))
@@ -76,7 +82,7 @@ def evaluate_fedot(label, forecast_length, shift=0):
     input_data = prepare_data(task, label=label, shift=shift)
     train_input, predict_input = train_test_data_setup(input_data)
     # Init model for the time series forecasting
-    model = Fedot(problem='ts_forecasting', task_params=task.task_params, timeout=1)
+    model = Fedot(problem='ts_forecasting', task_params=task.task_params, timeout=1, composer_params={'timeout': 1})
 
     # Run AutoML model design in the same way
     pipeline = model.fit(features=train_input)
@@ -89,7 +95,7 @@ def evaluate_fedot(label, forecast_length, shift=0):
                          len_train_data=len(input_data.features) - forecast_length,
                          y_name=label)
 
-    save_results(label, predict_input.features, forecast, predict_input.target, pipeline, figure)
+    save_results(label, predict_input.features, forecast, predict_input.target, pipeline, figure, shift)
 
 
 if __name__ == '__main__':
