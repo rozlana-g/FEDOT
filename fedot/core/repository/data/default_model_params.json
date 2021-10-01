@@ -68,5 +68,10 @@
     "teacher_forcing": 0.8,
     "optimizer": "adam",
     "loss": "mse"
+  },
+  "resample": {
+    "balance": "minority",
+    "replace": true,
+    "n_samples": null
   }
 }

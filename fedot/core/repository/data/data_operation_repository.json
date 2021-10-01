@@ -224,6 +224,12 @@
 		"class_decompose": {
 		  "meta": "classification_preprocessing",
 		  "tags": ["non-default", "decompose"]
+        },
+      "resample": {
+        "meta": "classification_preprocessing",
+        "tags": [
+          "imbalanced"
+        ]
 		}
 	}
 }
