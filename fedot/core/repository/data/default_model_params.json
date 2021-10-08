@@ -70,7 +70,7 @@
     "loss": "mse"
   },
   "resample": {
-    "balance": "minority",
+    "balance": "expand_minority",
     "replace": true,
     "n_samples": null
   }
