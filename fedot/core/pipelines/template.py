@@ -75,9 +75,9 @@ class PipelineTemplate:
         if hasattr(node, 'operation'):
             if (not isinstance(node.operation, str) and
                     node.operation.operation_type == atomized_model_type()):
-                operation_template = AtomizedModelTemplate(node, operation_id, nodes_from)
+                operation_template = AtomizedModelTemplate(node, operation_id, sorted(nodes_from))
             else:
-                operation_template = OperationTemplate(node, operation_id, nodes_from)
+                operation_template = OperationTemplate(node, operation_id, sorted(nodes_from))
 
             self.operation_templates.append(operation_template)
             self.total_pipeline_operations[operation_template.operation_type] += 1
@@ -95,10 +95,22 @@ class PipelineTemplate:
         """
 
         pipeline_template_dict = self.convert_to_dict(root_node)
+        fitted_ops = {}
+        if path is None:
+            fitted_ops = self._create_fitted_operations()
+
+            if fitted_ops is not None:
+                for operation in pipeline_template_dict['nodes']:
+                    saved_key = f'operation_{operation["operation_id"]}'
+                    if saved_key in fitted_ops.keys():
+                        pipeline_template_dict['fitted_operation_path'] = saved_key
+                    else:
+                        pipeline_template_dict['fitted_operation_path'] = None
+
         json_data = json.dumps(pipeline_template_dict, indent=4)
 
         if path is None:
-            return json_data, self._create_fitted_operations()
+            return json_data, fitted_ops
 
         path = self._prepare_paths(path, with_time=datetime_in_path)
         absolute_path = os.path.abspath(path)
@@ -161,7 +173,9 @@ class PipelineTemplate:
     def import_pipeline(self, source: Union[str, dict], dict_fitted_operations: dict = None):
         path = None
 
-        if type(source) is str:
+        if source is None:
+            raise ValueError('Cannot import pipeline: the source is None')
+        elif type(source) is str:
             path = source
             self._check_path_correct(path)
 
@@ -239,7 +253,7 @@ class PipelineTemplate:
                 node = SecondaryNode(operation_object.operation_type)
             else:
                 node = PrimaryNode(operation_object.operation_type)
-            node.operation.params = operation_object.custom_params
+            node.custom_params = operation_object.custom_params
             node.rating = operation_object.rating
 
         if hasattr(operation_object,
@@ -252,7 +266,7 @@ class PipelineTemplate:
 
             fitted_operation = joblib.load(path_to_operation)
         elif dict_fitted_operations is not None:
-            fitted_operation = joblib.load(dict_fitted_operations[operation_object.fitted_operation_path])
+            fitted_operation = joblib.load(dict_fitted_operations[f'operation_{operation_object.operation_id}'])
 
         operation_object.fitted_operation = fitted_operation
         node.fitted_operation = fitted_operation

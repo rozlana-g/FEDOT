@@ -1,5 +1,5 @@
-FEDOT
-=====
+.. image:: docs/fedot_logo.png
+   :alt: Logo of FEDOT framework
 
 .. start-badges
 .. list-table::
@@ -156,7 +156,7 @@ In Russian:
 
 - General concepts of evolutionary design for composite pipelines - `habr.com <https://habr.com/ru/company/spbifmo/blog/558450>`__
 - Automated time series forecasting with FEDOT - `habr.com <https://habr.com/ru/post/559796/>`__
-- Experience of hackathon winning with FEDOT - `itmo.news <https://news.itmo.ru/ru/university_live/achievements/news/10409/>`__
+- Details of FEDOT-based solution for Emergency DataHack - `habr.com <https://habr.com/ru/post/577886/>`__
 
 Project structure
 =================
@@ -206,6 +206,11 @@ Acknowledgments
 
 We acknowledge the contributors for their important impact and the participants of the numerous scientific conferences and workshops for their valuable advice and suggestions.
 
+Side projects
+=============
+- The prototype of web-GUI for FEDOT is available in `FEDOT.WEB <https://github.com/nccr-itmo/FEDOT.Web>`__ repository.
+
+
 Contacts
 ========
 - `Telegram channel for solving problems and answering questions on FEDOT <https://t.me/FEDOT_helpdesk>`_
@@ -223,12 +228,14 @@ Citation
 ========
 
 @article{nikitin2021automated,
-  title={Automated Evolutionary Approach for the Design of Composite Machine Learning Pipelines},
-  author={Nikitin, Nikolay O and Vychuzhanin, Pavel and Sarafanov, Mikhail and Polonskaia, Iana S and Revin, Ilia and Barabanova, Irina V and Maximov, Gleb and Kalyuzhnaya, Anna V and Boukhanovsky, Alexander},
-  journal={arXiv preprint arXiv:2106.15397},
-  year={2021}}
+  title = {Automated evolutionary approach for the design of composite machine learning pipelines},
+  author = {Nikolay O. Nikitin and Pavel Vychuzhanin and Mikhail Sarafanov and Iana S. Polonskaia and Ilia Revin and Irina V. Barabanova and Gleb Maximov and Anna V. Kalyuzhnaya and Alexander Boukhanovsky},
+  journal = {Future Generation Computer Systems},
+  year = {2021},
+  issn = {0167-739X},
+  doi = {https://doi.org/10.1016/j.future.2021.08.022}}
 
-@inproceedings{oolonskaia2021multi,
+@inproceedings{polonskaia2021multi,
   title={Multi-Objective Evolutionary Design of Composite Data-Driven Models},
   author={Polonskaia, Iana S. and Nikitin, Nikolay O. and Revin, Ilia and Vychuzhanin, Pavel and Kalyuzhnaya, Anna V.},
   booktitle={2021 IEEE Congress on Evolutionary Computation (CEC)},
@@ -236,21 +243,6 @@ Citation
   pages={926-933},
   doi={10.1109/CEC45853.2021.9504773}}
 
-@article{nikitin2020structural,
- title={Structural Evolutionary Learning for Composite Classification Models},
- author={Nikitin, Nikolay O and Polonskaia, Iana S and Vychuzhanin, Pavel and Barabanova, Irina V and Kalyuzhnaya, Anna V},
- journal={Procedia Computer Science},
- volume={178},
- pages={414--423},
- year={2020},
- publisher={Elsevier}}
-
-@inproceedings{kalyuzhnaya2020automatic,
- title={Automatic evolutionary learning of composite models with knowledge enrichment},
- author={Kalyuzhnaya, Anna V and Nikitin, Nikolay O and Vychuzhanin, Pavel and Hvatov, Alexander and Boukhanovsky, Alexander},
- booktitle={Proceedings of the 2020 Genetic and Evolutionary Computation Conference Companion},
- pages={43--44},
- year={2020}}
 
 Other papers - in `ResearchGate <https://www.researchgate.net/project/Evolutionary-multi-modal-AutoML-with-FEDOT-framework>`_.
 

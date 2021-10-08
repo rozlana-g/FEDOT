@@ -6,6 +6,7 @@ from fedot.core.data.data import InputData
 from fedot.core.data.data_split import train_test_data_setup
 from fedot.core.log import Log, LogManager, default_log
 from fedot.core.operations.model import Model
+from fedot.core.utils import DEFAULT_PARAMS_STUB
 from test.unit.utilities.test_pipeline_import_export import create_four_depth_pipeline
 
 
@@ -60,7 +61,7 @@ def test_logger_write_logs_correctly():
 
     try:
         knn = Model(operation_type='knnreg', log=test_log)
-        model, _ = knn.fit(train_data, is_fit_pipeline_stage=True)
+        model, _ = knn.fit(params=DEFAULT_PARAMS_STUB, data=train_data, is_fit_pipeline_stage=True)
     except Exception:
         print('Captured error')
 
@@ -69,7 +70,8 @@ def test_logger_write_logs_correctly():
             content = file.readlines()
 
     release_log(logger=test_log, log_file=test_log_file)
-    assert 'Can not find evaluation strategy' in content[0]
+    # Is there a required message in the logs
+    assert any('Can not find evaluation strategy' in log_message for log_message in content)
 
 
 def test_logger_manager_keeps_loggers_correctly():

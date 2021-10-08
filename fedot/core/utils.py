@@ -6,6 +6,8 @@ import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
 
+DEFAULT_PARAMS_STUB = 'default_params'
+
 
 def fedot_project_root() -> Path:
     """Returns FEDOT project root folder."""
@@ -33,9 +35,9 @@ def probs_to_labels(prediction: np.array):
     """ Converts predicted probabilities into labels """
     list_with_labels = []
     for list_with_probs in prediction:
-        list_with_labels.append(list_with_probs.argmax() + 1.0)
+        list_with_labels.append(list_with_probs.argmax())
 
-    return list_with_labels
+    return np.asarray(list_with_labels)
 
 
 def split_data(df: pd.DataFrame, t_size: float = 0.2):

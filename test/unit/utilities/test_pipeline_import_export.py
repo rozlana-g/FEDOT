@@ -5,11 +5,11 @@ import shutil
 import numpy as np
 import pytest
 
-from cases.data.data_utils import get_scoring_case_data_paths
-from fedot.core.data.data import InputData
 from fedot.core.pipelines.node import PrimaryNode, SecondaryNode
 from fedot.core.pipelines.pipeline import Pipeline
 from fedot.core.pipelines.template import PipelineTemplate, extract_subtree_root
+from test.unit.pipelines.test_decompose_pipelines import get_classification_data
+from test.unit.api.test_main_api import get_dataset
 from test.unit.tasks.test_forecasting import get_multiscale_pipeline, get_ts_data
 
 
@@ -22,7 +22,7 @@ def preprocessing_files_before_and_after_tests(request):
              'test_import_json_to_fitted_pipeline_correctly', 'test_export_import_for_one_pipeline_object_correctly_1',
              'test_export_import_for_one_pipeline_object_correctly_2', 'data_model_forecasting',
              'test_export_import_for_one_pipeline_object_correctly_3', 'data_model_classification',
-             'test_absolute_relative_paths_correctly_no_exception',
+             'test_absolute_relative_paths_correctly_no_exception', 'test_export_one_hot_encoding_operation',
              'test_import_custom_json_object_to_pipeline_and_fit_correctly_no_exception']
 
     delete_files = create_func_delete_files(paths)
@@ -109,8 +109,7 @@ def create_pipeline() -> Pipeline:
 
 
 def create_fitted_pipeline() -> Pipeline:
-    train_file_path, test_file_path = get_scoring_case_data_paths()
-    train_data = InputData.from_csv(train_file_path)
+    train_data, _ = get_classification_data()
 
     pipeline = create_pipeline()
     pipeline.fit(train_data)
@@ -177,9 +176,7 @@ def test_pipeline_template_to_json_correctly():
 
 
 def test_fitted_pipeline_cache_correctness_after_export_and_import():
-    train_file_path, test_file_path = get_scoring_case_data_paths()
-    train_data = InputData.from_csv(train_file_path)
-    test_data = InputData.from_csv(test_file_path)
+    train_data, test_data = get_classification_data()
 
     pipeline = create_classification_pipeline_with_preprocessing()
     pipeline.fit(train_data)
@@ -312,14 +309,28 @@ def test_import_custom_json_object_to_pipeline_and_fit_correctly_no_exception():
     file = '../../data/test_custom_json_template.json'
     json_path_load = os.path.join(test_file_path, file)
 
-    train_file_path, test_file_path = get_scoring_case_data_paths()
-    train_data = InputData.from_csv(train_file_path)
+    train_data, _ = get_classification_data()
 
     pipeline = Pipeline()
     pipeline.load(json_path_load)
+
     pipeline.fit(train_data)
 
     pipeline.save('test_import_custom_json_object_to_pipeline_and_fit_correctly_no_exception')
+
+
+def test_export_without_path_correctly():
+    pipeline = create_pipeline()
+
+    save_not_fitted_without_path, not_fitted_dict = pipeline.save()
+    assert len(save_not_fitted_without_path) > 0
+    assert not_fitted_dict is None
+
+    fitted_pipeline = create_fitted_pipeline()
+
+    save_fitted_without_path, fitted_dict = fitted_pipeline.save()
+    assert len(save_fitted_without_path) > 0
+    assert fitted_dict is not None
 
 
 def test_data_model_types_forecasting_pipeline_fit():
@@ -336,8 +347,7 @@ def test_data_model_types_forecasting_pipeline_fit():
 
 
 def test_data_model_type_classification_pipeline_fit():
-    train_file_path, test_file_path = get_scoring_case_data_paths()
-    train_data = InputData.from_csv(train_file_path)
+    train_data, _ = get_classification_data()
 
     pipeline = create_classification_pipeline_with_preprocessing()
     pipeline.fit(train_data)
@@ -365,3 +375,23 @@ def test_extract_subtree_root():
     assertion_list = [True if expected_types[index] == actual_types[index] else False
                       for index in range(len(expected_types))]
     assert all(assertion_list)
+
+
+def test_one_hot_encoder_serialization():
+    train_data, test_data, threshold = get_dataset('classification')
+
+    pipeline = Pipeline()
+    one_hot_node = PrimaryNode('one_hot_encoding')
+    final_node = SecondaryNode('dt', nodes_from=[one_hot_node])
+    pipeline.add_node(final_node)
+
+    pipeline.fit(train_data)
+    prediction_before_export = pipeline.predict(test_data)
+
+    pipeline.save('test_export_one_hot_encoding_operation')
+
+    pipeline_after = Pipeline()
+    pipeline_after.load(create_correct_path('test_export_one_hot_encoding_operation'))
+    prediction_after_export = pipeline_after.predict(test_data)
+
+    assert np.array_equal(prediction_before_export.features, prediction_after_export.features)

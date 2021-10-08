@@ -21,7 +21,8 @@ class ComponentAnalysisImplementation(DataOperationImplementation):
         super().__init__()
         self.pca = None
         self.params = None
-        self.amount_of_features = None
+        self.number_of_features = None
+        self.parameters_changed = False
 
     def fit(self, input_data):
         """
@@ -30,10 +31,10 @@ class ComponentAnalysisImplementation(DataOperationImplementation):
         :param input_data: data with features, target and ids for PCA training
         :return pca: trained PCA model (optional output)
         """
-        self.amount_of_features = np.array(input_data.features).shape[1]
+        self.number_of_features = np.array(input_data.features).shape[1]
 
-        if self.amount_of_features > 1:
-            self.check_and_correct_params()
+        if self.number_of_features > 1:
+            self.parameters_changed = self.check_and_correct_params()
             self.pca.fit(input_data.features)
 
         return self.pca
@@ -47,7 +48,7 @@ class ComponentAnalysisImplementation(DataOperationImplementation):
         :return input_data: data with transformed features attribute
         """
 
-        if self.amount_of_features > 1:
+        if self.number_of_features > 1:
             transformed_features = self.pca.transform(input_data.features)
         else:
             transformed_features = input_data.features
@@ -57,21 +58,29 @@ class ComponentAnalysisImplementation(DataOperationImplementation):
                                               transformed_features)
         return output_data
 
-    def check_and_correct_params(self) -> None:
+    def check_and_correct_params(self) -> bool:
         """ Method check if amount of features in data enough for n_components
         parameter in PCA or not. And if not enough - fixes it
         """
+        was_changed = False
         current_parameters = self.pca.get_params()
 
         if type(current_parameters['n_components']) == int:
-            if current_parameters['n_components'] > self.amount_of_features:
-                current_parameters['n_components'] = self.amount_of_features
+            if current_parameters['n_components'] > self.number_of_features:
+                current_parameters['n_components'] = self.number_of_features
+                was_changed = True
 
         self.pca.set_params(**current_parameters)
         self.params = current_parameters
 
+        return was_changed
+
     def get_params(self):
-        return self.pca.get_params()
+        if self.parameters_changed is True:
+            params_dict = self.pca.get_params()
+            return tuple([params_dict, ['n_components']])
+        else:
+            return self.pca.get_params()
 
 
 class PCAImplementation(ComponentAnalysisImplementation):
@@ -124,8 +133,7 @@ class OneHotEncodingImplementation(DataOperationImplementation):
         self.non_categorical_ids = None
 
     def fit(self, input_data: InputData):
-        """ Method for fit encoder with automatic determination of categorical
-        features
+        """ Method for fit encoder with automatic determination of categorical features
 
         :param input_data: data with features, target and ids for encoder training
         :return encoder: trained encoder (optional output)
@@ -175,6 +183,7 @@ class OneHotEncodingImplementation(DataOperationImplementation):
         """
 
         categorical_features = np.array(features[:, self.categorical_ids])
+        self._check_same_categories(categorical_features)
         transformed_categorical = self.encoder.transform(categorical_features).toarray()
 
         # If there are non-categorical features in the data
@@ -187,6 +196,13 @@ class OneHotEncodingImplementation(DataOperationImplementation):
             transformed_features = np.hstack(frames)
 
         return transformed_features
+
+    def _check_same_categories(self, categorical_features):
+        encoder_unique_categories = sorted(list(np.hstack(self.encoder.categories_)))
+        features_unique_categories = sorted(np.unique(np.array(categorical_features)))
+
+        if encoder_unique_categories != features_unique_categories:
+            raise ValueError('Category in test data was not exist in train.')
 
     def get_params(self):
         return self.encoder.get_params()

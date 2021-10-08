@@ -10,10 +10,10 @@ from PIL import Image
 
 from fedot.core.data.load_data import JSONBatchLoader, TextBatchLoader
 from fedot.core.data.merge import DataMerger
+from fedot.core.data.multi_modal import MultiModalData
 from fedot.core.data.supplementary_data import SupplementaryData
 from fedot.core.repository.dataset_types import DataTypesEnum
 from fedot.core.repository.tasks import Task, TaskTypesEnum
-from fedot.core.data.multi_modal import MultiModalData
 
 # Max unique values to convert numerical column to categorical.
 MAX_UNIQ_VAL = 12
@@ -244,6 +244,19 @@ class InputData(Data):
         return InputData(idx=self.idx[start:end + 1], features=new_features,
                          target=self.target[start:end + 1], task=self.task, data_type=self.data_type)
 
+    def shuffle(self):
+        """
+        Shuffles features and target if possible
+        """
+        if self.data_type == DataTypesEnum.table:
+            shuffled_ind = np.random.permutation(len(self.features))
+            idx, features, target = self.idx[shuffled_ind], self.features[shuffled_ind], self.target[shuffled_ind]
+            self.idx = idx
+            self.features = features
+            self.target = target
+        else:
+            pass
+
 
 @dataclass
 class OutputData(Data):
@@ -312,14 +325,15 @@ def data_has_categorical_features(data: Union[InputData, MultiModalData]) -> boo
     :param data: Union[InputData, MultiModalData]
     :return data_has_categorical_columns: bool, whether data has categorical columns or not
     """
+
     data_has_categorical_columns = False
 
     if isinstance(data, MultiModalData):
         for data_source_name, values in data.items():
             if data_source_name.startswith('data_source_table'):
-                data_has_categorical_columns = _integer_to_categorical(values)
-    elif _data_type_is_suitable_preprocessing(data):
-        data_has_categorical_columns = _integer_to_categorical(data)
+                data_has_categorical_columns = _has_data_categorical(values)
+    elif data_type_is_suitable_preprocessing(data):
+        data_has_categorical_columns = _has_data_categorical(data)
 
     return data_has_categorical_columns
 
@@ -329,9 +343,9 @@ def data_has_missing_values(data: Union[InputData, MultiModalData]) -> bool:
 
     if isinstance(data, MultiModalData):
         for data_source_name, values in data.items():
-            if _data_type_is_table(values):
+            if data_type_is_table(values):
                 return pd.DataFrame(values.features).isna().sum().sum() > 0
-    elif _data_type_is_suitable_preprocessing(data):
+    elif data_type_is_suitable_preprocessing(data):
         return pd.DataFrame(data.features).isna().sum().sum() > 0
     return False
 
@@ -373,19 +387,18 @@ def divide_data_categorical_numerical(input_data: InputData) -> (InputData, Inpu
     return numerical, categorical
 
 
-def _data_type_is_table(data: InputData) -> bool:
+def data_type_is_table(data: InputData) -> bool:
     return data.data_type == DataTypesEnum.table
 
 
-def _data_type_is_suitable_preprocessing(data: InputData) -> bool:
+def data_type_is_suitable_preprocessing(data: InputData) -> bool:
     if data.data_type == DataTypesEnum.table or data.data_type == DataTypesEnum.ts:
         return True
     return False
 
 
-def _integer_to_categorical(data: InputData) -> bool:
-    """ If some numerical column has unique values less then
-    MAX_UNIQ_VAL, then convert this column to string.
+def _has_data_categorical(data: InputData) -> bool:
+    """ Whether data categorical columns or not.
 
     :param data: InputData
     :return data_has_categorical_columns: bool, whether data has categorical columns or not
@@ -393,34 +406,17 @@ def _integer_to_categorical(data: InputData) -> bool:
     data_has_categorical_columns = False
 
     if isinstance(data.features, list) or len(data.features.shape) == 1:
-        col_value = data.features
-        transformed_features = _convert_categorical_int_to_str(col_value)
-        data.features = transformed_features
-
-        data_has_categorical_columns = _is_values_categorical(transformed_features)
+        data_has_categorical_columns = _is_values_categorical(data.features)
     else:
         num_columns = data.features.shape[1]
         for col_index in range(num_columns):
-            col_value = data.features[:, col_index]
-            transformed_features = _convert_categorical_int_to_str(col_value)
-            data.features[:, col_index] = transformed_features
-
-            if not data_has_categorical_columns:
-                data_has_categorical_columns = _is_values_categorical(transformed_features)
+            if data_has_categorical_columns:
+                break
+            data_has_categorical_columns = _is_values_categorical(data.features[:, col_index])
 
     return data_has_categorical_columns
 
 
-def _is_values_categorical(values):
-    if isinstance(values[0], str):
-        return True
-    return False
-
-
-def _convert_categorical_int_to_str(values):
-    if isinstance(values[0], int):
-        uniq_val_in_col = len(np.unique(values))
-        if uniq_val_in_col <= MAX_UNIQ_VAL:
-            values = list(map(str, values))
-
-    return values
+def _is_values_categorical(values: List):
+    # Check if any value in list has 'string' type
+    return any(list(map(lambda x: isinstance(x, str), values)))

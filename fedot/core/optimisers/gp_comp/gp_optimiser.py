@@ -51,7 +51,8 @@ class GPGraphOptimiserParameters:
                  regularization_type: RegularizationTypesEnum = RegularizationTypesEnum.none,
                  genetic_scheme_type: GeneticSchemeTypesEnum = GeneticSchemeTypesEnum.generational,
                  with_auto_depth_configuration: bool = False, depth_increase_step: int = 3,
-                 multi_objective: bool = False):
+                 multi_objective: bool = False,
+                 history_folder: str = None):
 
         self.selection_types = selection_types
         self.crossover_types = crossover_types
@@ -61,6 +62,7 @@ class GPGraphOptimiserParameters:
         self.with_auto_depth_configuration = with_auto_depth_configuration
         self.depth_increase_step = depth_increase_step
         self.multi_objective = multi_objective
+        self.history_folder = history_folder
 
     def set_default_params(self):
         """
@@ -130,7 +132,7 @@ class GPGraphOptimiser:
 
         self.population = None
         self.initial_graph = initial_graph
-        self.history = OptHistory(metrics)
+        self.history = OptHistory(metrics, parameters.history_folder)
         self.history.clean_results()
 
     def _create_randomized_pop_from_inital_pipeline(self, initial_pipeline) -> List[Individual]:
@@ -173,7 +175,7 @@ class GPGraphOptimiser:
         num_of_new_individuals = self.offspring_size(offspring_rate)
 
         with OptimisationTimer(log=self.log, timeout=self.requirements.timeout) as t:
-            self._evaluate_individuals(self.population, objective_function, timer=t)
+            self.population = self._evaluate_individuals(self.population, objective_function, timer=t)
 
             if self.archive is not None:
                 self.archive.update(self.population)
@@ -218,7 +220,7 @@ class GPGraphOptimiser:
                     new_population += self.reproduce(selected_individuals[parent_num],
                                                      selected_individuals[parent_num + 1])
 
-                self._evaluate_individuals(new_population, objective_function, timer=t)
+                new_population = self._evaluate_individuals(new_population, objective_function, timer=t)
 
                 self.prev_best = deepcopy(self.best_individual)
 
@@ -392,9 +394,12 @@ class GPGraphOptimiser:
         return best
 
     def _evaluate_individuals(self, individuals_set, objective_function, timer=None):
-        evaluate_individuals(individuals_set=individuals_set, objective_function=objective_function,
-                             graph_generation_params=self.graph_generation_params,
-                             timer=timer, is_multi_objective=self.parameters.multi_objective)
+        evaluated_individuals = evaluate_individuals(individuals_set=individuals_set,
+                                                     objective_function=objective_function,
+                                                     graph_generation_params=self.graph_generation_params,
+                                                     timer=timer, is_multi_objective=self.parameters.multi_objective)
+        individuals_set = correct_if_population_has_nans(evaluated_individuals, self.log)
+        return individuals_set
 
 
 @dataclass
@@ -408,3 +413,17 @@ class GraphGenerationParams:
     adapter: BaseOptimizationAdapter = DirectAdapter()
     rules_for_constraint: Optional[List[Callable]] = None
     advisor: Optional[DefaultChangeAdvisor] = DefaultChangeAdvisor()
+
+
+def correct_if_population_has_nans(population, log):
+    len_before = len(population)
+    population = [ind for ind in population if ind.fitness is not None]
+    len_after = len(population)
+
+    if len_after != len_before:
+        log.info(f"None from individual's fitness were removed")
+
+    if len(population) == 0:
+        raise ValueError('All evaluations of fitness was unsuccessful.')
+
+    return population

@@ -3,7 +3,7 @@ import numpy as np
 from fedot.core.data.data import InputData
 from fedot.core.data.multi_modal import MultiModalData
 from fedot.core.operations.evaluation.operation_implementations.data_operations.ts_transformations import \
-    _prepare_target, _ts_to_table, _sparse_matrix
+    prepare_target, ts_to_table, _sparse_matrix
 from fedot.core.pipelines.node import PrimaryNode, SecondaryNode
 from fedot.core.pipelines.pipeline import Pipeline
 from fedot.core.repository.dataset_types import DataTypesEnum
@@ -79,7 +79,7 @@ def test_ts_to_lagged_table():
     # Check first step - lagged transformation of features
     train_input, _, _ = synthetic_univariate_ts()
 
-    new_idx, lagged_table = _ts_to_table(idx=train_input.idx,
+    new_idx, lagged_table = ts_to_table(idx=train_input.idx,
                                          time_series=train_input.features,
                                          window_size=window_size)
 
@@ -103,7 +103,7 @@ def test_ts_to_lagged_table():
     assert new_idx_as_tuple == correct_new_idx
 
     # Second step - processing for correct the target
-    final_idx, features_columns, final_target = _prepare_target(idx=new_idx,
+    final_idx, features_columns, final_target = prepare_target(idx=new_idx,
                                                                 features_columns=lagged_table,
                                                                 target=train_input.target,
                                                                 forecast_length=forecast_length)
@@ -137,7 +137,7 @@ def test_ts_to_lagged_table():
 def test_sparse_matrix():
     # Create lagged matrix for sparse
     train_input, _, _ = synthetic_univariate_ts()
-    _, lagged_table = _ts_to_table(idx=train_input.idx,
+    _, lagged_table = ts_to_table(idx=train_input.idx,
                                    time_series=train_input.features,
                                    window_size=window_size)
     features_columns = _sparse_matrix(log, lagged_table)
@@ -173,15 +173,15 @@ def test_forecast_with_exog():
     # Set window size for lagged transformation
     node_lagged.custom_params = {'window_size': window_size}
     # Exogenous variable for exog node
-    node_exog = PrimaryNode('exog_ts_data_source')
+    node_exog = PrimaryNode('exog_ts')
 
     node_final = SecondaryNode('linear', nodes_from=[node_lagged, node_exog])
     pipeline = Pipeline(node_final)
 
-    pipeline.fit(input_data=MultiModalData({'exog_ts_data_source': train_exog_ts,
+    pipeline.fit(input_data=MultiModalData({'exog_ts': train_exog_ts,
                                             'lagged': train_source_ts}))
 
-    forecast = pipeline.predict(input_data=MultiModalData({'exog_ts_data_source': predict_exog_ts,
+    forecast = pipeline.predict(input_data=MultiModalData({'exog_ts': predict_exog_ts,
                                                            'lagged': predict_source_ts}))
     prediction = np.ravel(np.array(forecast.predict))
 

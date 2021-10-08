@@ -3,6 +3,7 @@ from abc import ABC, abstractmethod
 from io import BytesIO
 
 import joblib
+import numpy as np
 
 from fedot.core.log import Log, default_log
 from fedot.core.pipelines.node import Node
@@ -82,7 +83,7 @@ class OperationTemplate(OperationTemplateAbstract):
         if not isinstance(node.operation, str):
             # for model-based operations
             self.operation_type = node.operation.operation_type
-            self.custom_params = node.operation.params
+            self.custom_params = node.custom_params
             self.params = self._create_full_params(node)
 
             if _is_node_fitted(node):
@@ -107,7 +108,7 @@ class OperationTemplate(OperationTemplateAbstract):
             # Check if it is needed to process "model in model" cases
             # such strategy is needed for RANSAC or RFE algorithms
             for wrapped_operation in wrapped_operations:
-                if wrapped_operation in params:
+                if params is not None and wrapped_operation in params:
                     del params[wrapped_operation]
 
             if isinstance(self.custom_params, dict):
@@ -164,6 +165,8 @@ class OperationTemplate(OperationTemplateAbstract):
         self.operation_id = operation_object['operation_id']
         self.operation_type = operation_object['operation_type']
         self.params = operation_object['params']
+        if 'dtype' in self.params and isinstance(self.params['dtype'], str):
+            self.params['dtype'] = np.dtype(self.params['dtype'])
         self.nodes_from = operation_object['nodes_from']
         if 'fitted_operation_path' in operation_object:
             self.fitted_operation_path = operation_object['fitted_operation_path']
@@ -181,7 +184,12 @@ def _check_existing_path(path: str):
 
 
 def extract_operation_params(node: Node):
-    return node.fitted_operation.get_params()
+    params = node.custom_params
+
+    if 'dtype' in params:
+        params['dtype'] = params['dtype'].__name__
+
+    return params
 
 
 def _extract_operation_name(node: Node):

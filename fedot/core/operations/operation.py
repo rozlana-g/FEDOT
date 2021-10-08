@@ -1,13 +1,10 @@
+from typing import Union
+
 from fedot.core.data.data import InputData
 from fedot.core.log import Log, default_log
-from fedot.core.operations.evaluation.operation_implementations.data_operations. \
-    sklearn_transformations import ImputationImplementation, str_columns_check
-from fedot.core.repository.dataset_types import DataTypesEnum
 from fedot.core.repository.operation_types_repository import OperationMetaInfo
 from fedot.core.repository.tasks import Task, TaskTypesEnum, compatible_task_types
-from fedot.core.repository.default_model_params_repository import DefaultModelParamsRepository
-
-DEFAULT_PARAMS_STUB = 'default_params'
+from fedot.core.utils import DEFAULT_PARAMS_STUB
 
 
 class Operation:
@@ -25,10 +22,7 @@ class Operation:
 
         self._eval_strategy = None
         self.operations_repo = None
-
-        self.params = _get_default_params(operation_type)
-        if not self.params:
-            self.params = DEFAULT_PARAMS_STUB
+        self.fitted_operation = None
 
         if not log:
             self.log = default_log(__name__)
@@ -36,9 +30,10 @@ class Operation:
             self.log = log
 
     def _init(self, task: Task, **kwargs):
+        params = kwargs.get('params')
         params_for_fit = None
-        if self.params != DEFAULT_PARAMS_STUB:
-            params_for_fit = self.params
+        if params != DEFAULT_PARAMS_STUB:
+            params_for_fit = params
 
         try:
             self._eval_strategy = \
@@ -53,10 +48,8 @@ class Operation:
         if 'output_mode' in kwargs:
             self._eval_strategy.output_mode = kwargs['output_mode']
 
-    @property
-    def description(self):
+    def description(self, operation_params: dict) -> str:
         operation_type = self.operation_type
-        operation_params = self.params
         return f'n_{operation_type}_{operation_params}'
 
     @property
@@ -72,25 +65,23 @@ class Operation:
             raise ValueError(f'{self.__class__.__name__} {self.operation_type} not found')
         return operation_info
 
-    def fit(self, data: InputData, is_fit_pipeline_stage: bool = True):
+    def fit(self, params: Union[str, dict, None], data: InputData, is_fit_pipeline_stage: bool = True):
         """
         This method is used for defining and running of the evaluation strategy
         to train the operation with the data provided
 
+        :param params: hyperparameters for operation
         :param data: data used for operation training
         :return: tuple of trained operation and prediction on train data
         :param is_fit_pipeline_stage: is this fit or predict stage for pipeline
         """
-        self._init(data.task)
+        self._init(data.task, params=params)
 
-        if 'imputation' not in self.operation_type:
-            data = _fill_remaining_gaps(data, self.operation_type)
+        self.fitted_operation = self._eval_strategy.fit(train_data=data)
 
-        fitted_operation = self._eval_strategy.fit(train_data=data)
+        predict_train = self.predict(self.fitted_operation, data, is_fit_pipeline_stage)
 
-        predict_train = self.predict(fitted_operation, data, is_fit_pipeline_stage)
-
-        return fitted_operation, predict_train
+        return self.fitted_operation, predict_train
 
     def predict(self, fitted_operation, data: InputData,
                 is_fit_pipeline_stage: bool, output_mode: str = 'default'):
@@ -107,8 +98,6 @@ class Operation:
         is_main_target = data.supplementary_data.is_main_target
         data_flow_length = data.supplementary_data.data_flow_length
         self._init(data.task, output_mode=output_mode)
-
-        data = _fill_remaining_gaps(data, self.operation_type)
 
         prediction = self._eval_strategy.predict(
             trained_operation=fitted_operation,
@@ -163,26 +152,3 @@ def _eval_strategy_for_task(operation_type: str, current_task_type: TaskTypesEnu
 
     strategy = operations_repo.operation_info_by_id(operation_type).current_strategy(current_task_type)
     return strategy
-
-
-def _fill_remaining_gaps(data: InputData, operation_type: str):
-    """ Function for filling in the nans in the table with features """
-    # TODO discuss: move this "filling" to the pipeline method - we use such method too much here (for all tables)
-    #  np.isnan(features).any() and np.isnan(features) doesn't work with non-numeric arrays
-    features = data.features
-
-    if data.data_type == DataTypesEnum.table and data.task.task_type != TaskTypesEnum.ts_forecasting:
-        # Got indices of columns with string objects
-        categorical_ids, _ = str_columns_check(features)
-
-        # Apply most_frequent or mean filling strategy
-        if len(categorical_ids) == 0:
-            data.features = ImputationImplementation().fit_transform(data).predict
-        else:
-            data.features = ImputationImplementation(**{'strategy': 'most_frequent'}).fit_transform(data).predict
-    return data
-
-
-def _get_default_params(model_name: str):
-    with DefaultModelParamsRepository() as default_params_repo:
-        return default_params_repo.get_default_params_for_model(model_name)

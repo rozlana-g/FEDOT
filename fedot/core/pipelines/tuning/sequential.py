@@ -1,12 +1,10 @@
 from datetime import timedelta
 from functools import partial
-
-import numpy as np
+from typing import Callable, ClassVar
 from hyperopt import fmin, space_eval, tpe
 
-from fedot.core.data.data_split import train_test_data_setup
 from fedot.core.log import Log
-from fedot.core.pipelines.tuning.hyperparams import convert_params, get_node_params
+from fedot.core.pipelines.tuning.search_space import convert_params, SearchSpace
 from fedot.core.pipelines.tuning.tuner_interface import HyperoptTuner, _greater_is_better
 
 
@@ -17,8 +15,10 @@ class SequentialTuner(HyperoptTuner):
 
     def __init__(self, pipeline, task, iterations=100,
                  timeout: timedelta = timedelta(minutes=5),
-                 inverse_node_order=False, log: Log = None):
-        super().__init__(pipeline, task, iterations, timeout, log)
+                 inverse_node_order=False, log: Log = None,
+                 search_space: ClassVar = SearchSpace(),
+                 algo: Callable = tpe.suggest):
+        super().__init__(pipeline, task, iterations, timeout, log, search_space, algo)
         self.inverse_node_order = inverse_node_order
 
     def tune_pipeline(self, input_data, loss_function, loss_params=None,
@@ -50,11 +50,11 @@ class SequentialTuner(HyperoptTuner):
         nodes_ids = self.get_nodes_order(nodes_number=nodes_amount)
         for node_id in nodes_ids:
             node = self.pipeline.nodes[node_id]
-            operation_name = str(node.operation)
+            operation_name = node.operation.operation_type
 
             # Get node's parameters to optimize
-            node_params = get_node_params(node_id=node_id,
-                                          operation_name=operation_name)
+            node_params = self.search_space.get_node_params(node_id=node_id,
+                                                            operation_name=operation_name)
 
             if node_params is None:
                 self.log.info(f'"{operation_name}" operation has no parameters to optimize')
@@ -90,11 +90,11 @@ class SequentialTuner(HyperoptTuner):
         self.init_check(input_data, loss_function, loss_params)
 
         node = self.pipeline.nodes[node_index]
-        operation_name = str(node.operation.operation_type)
+        operation_name = node.operation.operation_type
 
         # Get node's parameters to optimize
-        node_params = get_node_params(node_id=node_index,
-                                      operation_name=operation_name)
+        node_params = self.search_space.get_node_params(node_id=node_index,
+                                                        operation_name=operation_name)
 
         if node_params is None:
             self.log.info(f'"{operation_name}" operation has no parameters to optimize')
@@ -148,7 +148,7 @@ class SequentialTuner(HyperoptTuner):
                                        loss_function=loss_function,
                                        loss_params=loss_params),
                                node_params,
-                               algo=tpe.suggest,
+                               algo=self.algo,
                                max_evals=iterations_per_node,
                                timeout=seconds_per_node)
 

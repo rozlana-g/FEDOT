@@ -24,6 +24,7 @@ class LaggedImplementation(DataOperationImplementation):
         self.sparse_transform = False
         self.use_svd = False
         self.features_columns = None
+        self.parameters_changed = False
 
         # Define logger object
         if not log:
@@ -51,28 +52,29 @@ class LaggedImplementation(DataOperationImplementation):
         old_idx = new_input_data.idx
 
         # Correct window size parameter
-        log_info, self.window_size = _check_and_correct_window_size(new_input_data.features, self.window_size,
-                                                                    forecast_length, self.window_size_minimum)
-        if log_info:
-            self.log.info(log_info)
+        self.window_size, self.parameters_changed = _check_and_correct_window_size(new_input_data.features,
+                                                                                   self.window_size,
+                                                                                   forecast_length,
+                                                                                   self.window_size_minimum,
+                                                                                   self.log)
 
         if is_fit_pipeline_stage:
             # Transformation for fit stage of the pipeline
             target = new_input_data.target
             features = np.array(new_input_data.features)
             # Prepare features for training
-            new_idx, self.features_columns = _ts_to_table(idx=old_idx,
-                                                          time_series=features,
-                                                          window_size=self.window_size)
+            new_idx, self.features_columns = ts_to_table(idx=old_idx,
+                                                         time_series=features,
+                                                         window_size=self.window_size)
 
             # Sparsing matrix of lagged features
             if self.sparse_transform:
                 self.features_columns = _sparse_matrix(self.log, self.features_columns, self.n_components, self.use_svd)
             # Transform target
-            new_idx, self.features_columns, new_target = _prepare_target(idx=new_idx,
-                                                                         features_columns=self.features_columns,
-                                                                         target=target,
-                                                                         forecast_length=forecast_length)
+            new_idx, self.features_columns, new_target = prepare_target(idx=new_idx,
+                                                                        features_columns=self.features_columns,
+                                                                        target=target,
+                                                                        forecast_length=forecast_length)
 
             # Update target for Input Data
             new_input_data.target = new_target
@@ -106,9 +108,13 @@ class SparseLaggedTransformationImplementation(LaggedImplementation):
         self.n_components = params.get('n_components')
 
     def get_params(self):
-        return {'window_size': self.window_size,
-                'n_components': self.n_components,
-                'use_svd': self.use_svd}
+        params_dict = {'window_size': self.window_size,
+                       'n_components': self.n_components,
+                       'use_svd': self.use_svd}
+        if self.parameters_changed is True:
+            return tuple([params_dict, ['window_size']])
+        else:
+            return params_dict
 
 
 class LaggedTransformationImplementation(LaggedImplementation):
@@ -116,12 +122,15 @@ class LaggedTransformationImplementation(LaggedImplementation):
 
     def __init__(self, **params):
         super().__init__()
-
         self.window_size_minimum = 2
         self.window_size = round(params.get('window_size'))
 
     def get_params(self):
-        return {'window_size': self.window_size}
+        params_dict = {'window_size': self.window_size}
+        if self.parameters_changed is True:
+            return tuple([params_dict, ['window_size']])
+        else:
+            return params_dict
 
 
 class TsSmoothingImplementation(DataOperationImplementation):
@@ -188,38 +197,40 @@ class ExogDataTransformationImplementation(DataOperationImplementation):
         :param is_fit_pipeline_stage: is this fit or predict stage for pipeline
         :return output_data: output data with features as columns
         """
-        parameters = input_data.task.task_params
-        old_idx = input_data.idx
+        copied_data = copy(input_data)
+        parameters = copied_data.task.task_params
+        old_idx = copied_data.idx
         forecast_length = parameters.forecast_length
 
         if is_fit_pipeline_stage is True:
             # Transform features in "target-like way"
-            _, _, features_columns = _prepare_target(idx=old_idx,
-                                                     features_columns=input_data.features,
-                                                     target=input_data.features,
-                                                     forecast_length=forecast_length)
+            _, _, features_columns = prepare_target(idx=old_idx,
+                                                    features_columns=copied_data.features,
+                                                    target=copied_data.features,
+                                                    forecast_length=forecast_length)
 
             # Transform target
-            new_idx, _, new_target = _prepare_target(idx=old_idx,
-                                                     features_columns=input_data.features,
-                                                     target=input_data.target,
-                                                     forecast_length=forecast_length)
+            new_idx, _, new_target = prepare_target(idx=old_idx,
+                                                    features_columns=copied_data.features,
+                                                    target=copied_data.target,
+                                                    forecast_length=forecast_length)
             # Update target for Input Data
-            input_data.target = new_target
-            input_data.idx = new_idx
+            copied_data.target = new_target
+            copied_data.idx = new_idx
         else:
             # Transformation for predict stage of the pipeline
-            features_columns = np.array(input_data.features)
+            features_columns = np.array(copied_data.features)[-forecast_length:]
+            copied_data.idx = copied_data.idx[-forecast_length:]
             features_columns = features_columns.reshape(1, -1)
 
-        output_data = self._convert_to_output(input_data,
+        output_data = self._convert_to_output(copied_data,
                                               features_columns,
                                               data_type=DataTypesEnum.table)
 
         return output_data
 
     def get_params(self):
-        return None
+        return {}
 
 
 class GaussianFilterImplementation(DataOperationImplementation):
@@ -265,7 +276,7 @@ class GaussianFilterImplementation(DataOperationImplementation):
 
 
 def _check_and_correct_window_size(time_series: np.array, window_size: int, forecast_length: int,
-                                   window_size_minimum: int):
+                                   window_size_minimum: int, log: Log):
     """ Method check if the length of the time series is not enough for
     lagged transformation - clip it
 
@@ -273,16 +284,10 @@ def _check_and_correct_window_size(time_series: np.array, window_size: int, fore
     :param window_size: size of sliding window, which defines lag
     :param forecast_length: forecast length
     :param window_size_minimum: minimum moving window size
+    :param log: logger for saving messages
     """
-    log_message = None
     prefix = "Warning: window size of lagged transformation was changed"
-
-    # Minimum threshold
-    if window_size < window_size_minimum:
-        previous_size = window_size
-        window_size = window_size_minimum
-
-        log_message = f"{prefix} from {previous_size} to {window_size}"
+    was_changed = False
 
     # Maximum threshold
     removing_len = window_size + forecast_length
@@ -291,12 +296,21 @@ def _check_and_correct_window_size(time_series: np.array, window_size: int, fore
         # At least 10 objects we need for training, so minus 10
         window_size = len(time_series) - forecast_length - 10
 
-        log_message = f"{prefix} from {previous_size} to {window_size}"
+        log.info(f"{prefix} from {previous_size} to {window_size}")
+        was_changed = True
 
-    return log_message, window_size
+    # Minimum threshold
+    if window_size < window_size_minimum:
+        previous_size = window_size
+        window_size = window_size_minimum
+
+        log.info(f"{prefix} from {previous_size} to {window_size}")
+        was_changed = True
+
+    return window_size, was_changed
 
 
-def _ts_to_table(idx, time_series: np.array, window_size: int):
+def ts_to_table(idx, time_series: np.array, window_size: int):
     """ Method convert time series to lagged form.
 
     :param idx: the indices of the time series to convert
@@ -318,8 +332,9 @@ def _ts_to_table(idx, time_series: np.array, window_size: int):
 
     transformed = np.array(lagged_dataframe)
 
-    # Generate dataset with features
+    # Remove extra column (it will go to target)
     features_columns = transformed[:, 1:]
+    # Generate dataset with features
     features_columns = np.fliplr(features_columns)
 
     # First n elements in time series are removed
@@ -342,18 +357,18 @@ def _sparse_matrix(logger, features_columns: np.array, n_components_perc=0.5, us
         n_components_perc = 0.5
 
     if use_svd:
-        n_components = int(features_columns.shape[1]*n_components_perc)
+        n_components = int(features_columns.shape[1] * n_components_perc)
         # Getting the initial approximation of number of components
         if not n_components:
-            n_components = int(features_columns.shape[1]*n_components_perc)
+            n_components = int(features_columns.shape[1] * n_components_perc)
         if n_components >= features_columns.shape[0]:
-            n_components = features_columns.shape[0]-1
+            n_components = features_columns.shape[0] - 1
         logger.info(f'Initial approximation of number of components set as {n_components}')
 
         # Forming the first value of explained variance
         components = _get_svd(features_columns, n_components)
     else:
-        step = int(1/n_components_perc)
+        step = int(1 / n_components_perc)
         indeces_to_stay = np.arange(1, features_columns.shape[1], step)
         components = np.take(features_columns, indeces_to_stay, 1)
 
@@ -375,7 +390,7 @@ def _get_svd(features_columns: np.array, n_components: int):
     return components
 
 
-def _prepare_target(idx, features_columns: np.array, target, forecast_length: int):
+def prepare_target(idx, features_columns: np.array, target, forecast_length: int):
     """ Method convert time series to lagged form. Transformation applied
     only for generating target table (time series considering as multi-target
     regression task).

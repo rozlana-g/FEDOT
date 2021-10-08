@@ -1,14 +1,14 @@
 import datetime
 import os
-import numpy as np
 from functools import partial
 
+import numpy as np
 from deap import tools
 
 from fedot.core.composer.advisor import PipelineChangeAdvisor
 from fedot.core.composer.gp_composer.gp_composer import GPComposerBuilder, \
     GPComposerRequirements, sample_split_ratio_for_tasks
-from fedot.core.composer.gp_composer.specific_operators import boosting_mutation
+from fedot.core.composer.gp_composer.specific_operators import boosting_mutation, parameter_change_mutation
 from fedot.core.dag.validation_rules import DEFAULT_DAG_RULES
 from fedot.core.data.data import InputData
 from fedot.core.data.data_split import train_test_data_setup
@@ -18,20 +18,24 @@ from fedot.core.optimisers.gp_comp.gp_operators import evaluate_individuals, fil
 from fedot.core.optimisers.gp_comp.gp_optimiser import GraphGenerationParams
 from fedot.core.optimisers.gp_comp.individual import Individual
 from fedot.core.optimisers.gp_comp.operators.crossover import CrossoverTypesEnum, crossover
-from fedot.core.optimisers.gp_comp.operators.mutation import MutationTypesEnum, mutation
+from fedot.core.optimisers.gp_comp.operators.mutation import MutationTypesEnum, mutation, reduce_mutation, \
+    single_drop_mutation, _adapt_and_apply_mutations
 from fedot.core.optimisers.graph import OptGraph, OptNode
 from fedot.core.optimisers.timer import OptimisationTimer
 from fedot.core.optimisers.utils.multi_objective_fitness import MultiObjFitness
-from fedot.core.pipelines.node import PrimaryNode, SecondaryNode
+from fedot.core.pipelines.node import PrimaryNode, SecondaryNode, \
+    get_default_params
 from fedot.core.pipelines.pipeline import Pipeline
 from fedot.core.repository.operation_types_repository import OperationTypesRepository
 from fedot.core.repository.quality_metrics_repository import ClassificationMetricsEnum
 from fedot.core.repository.tasks import Task, TaskTypesEnum
 from fedot.core.utils import fedot_project_root
 from test.unit.composer.test_composer import _to_numerical
-from test.unit.pipelines.test_node_cache import pipeline_fifth, pipeline_first, pipeline_fourth, \
-    pipeline_second, pipeline_third
+from test.unit.pipelines.test_node_cache import pipeline_fifth, pipeline_first, pipeline_fourth, pipeline_second, \
+    pipeline_third
+from test.unit.tasks.test_forecasting import get_ts_data
 from test.unit.tasks.test_regression import get_synthetic_regression_data
+from test.unit.test_logger import release_log
 
 
 def file_data():
@@ -64,6 +68,24 @@ def graph_example():
 
     graph.add_node(root_of_tree)
     return graph
+
+
+def generate_pipeline_with_single_node():
+    pipeline = Pipeline()
+    pipeline.add_node(PrimaryNode('knn'))
+
+    return pipeline
+
+
+def generate_so_complex_pipeline():
+    node_imp = PrimaryNode('simple_imputation')
+    node_lagged = SecondaryNode('lagged', nodes_from=[node_imp])
+    node_ridge = SecondaryNode('ridge', nodes_from=[node_lagged])
+    node_decompose = SecondaryNode('decompose', nodes_from=[node_lagged, node_ridge])
+    node_pca = SecondaryNode('pca', nodes_from=[node_decompose])
+    node_final = SecondaryNode('ridge', nodes_from=[node_ridge, node_pca])
+    pipeline = Pipeline(node_final)
+    return pipeline
 
 
 def pipeline_with_custom_parameters(alpha_value):
@@ -115,20 +137,20 @@ def test_evaluate_individuals():
     timeout = datetime.timedelta(minutes=0.001)
     params = GraphGenerationParams(adapter=PipelineAdapter(), advisor=PipelineChangeAdvisor())
     with OptimisationTimer(timeout=timeout) as t:
-        evaluate_individuals(individuals_set=population, objective_function=metric_function_for_nodes,
-                             graph_generation_params=params,
-                             is_multi_objective=False, timer=t)
-    assert len(population) == 1
-    assert population[0].fitness is not None
+        evaluated = evaluate_individuals(individuals_set=population, objective_function=metric_function_for_nodes,
+                                         graph_generation_params=params,
+                                         is_multi_objective=False, timer=t)
+    assert len(evaluated) == 1
+    assert evaluated[0].fitness is not None
 
     population = [Individual(adapter.adapt(c)) for c in pipelines_to_evaluate]
     timeout = datetime.timedelta(minutes=5)
     with OptimisationTimer(timeout=timeout) as t:
-        evaluate_individuals(individuals_set=population, objective_function=metric_function_for_nodes,
-                             graph_generation_params=params,
-                             is_multi_objective=False, timer=t)
-    assert len(population) == 4
-    assert all([ind.fitness is not None for ind in population])
+        evaluated = evaluate_individuals(individuals_set=population, objective_function=metric_function_for_nodes,
+                                         graph_generation_params=params,
+                                         is_multi_objective=False, timer=t)
+    assert len(evaluated) == 4
+    assert all([ind.fitness is not None for ind in evaluated])
 
 
 def test_filter_duplicates():
@@ -390,6 +412,56 @@ def test_boosting_mutation_for_linear_graph():
     assert result is not None
 
 
+def test_boosting_mutation_for_non_lagged_ts_model():
+    """
+    Tests boosting mutation can add correct boosting cascade for ts forecasting with non-lagged model
+    """
+    linear_two_nodes = OptGraph(OptNode({'name': 'clstm'},
+                                        nodes_from=[OptNode({'name': 'smoothing'})]))
+
+    init_node = OptNode({'name': 'smoothing'})
+    model_node = OptNode({'name': 'clstm'}, nodes_from=[init_node])
+    lagged_node = OptNode({'name': 'lagged'}, nodes_from=[init_node])
+
+    boosting_graph = \
+        OptGraph(
+            OptNode({'name': 'ridge'},
+                    [model_node, OptNode({'name': 'ridge', },
+                                         [OptNode({'name': 'decompose'},
+                                                  [model_node, lagged_node])])]))
+    adapter = PipelineAdapter()
+    # to ensure hyperparameters of custom models
+    boosting_graph = adapter.adapt(adapter.restore(boosting_graph))
+
+    composer_requirements = GPComposerRequirements(primary=['smoothing'],
+                                                   secondary=['ridge'], mutation_prob=1)
+
+    graph_params = GraphGenerationParams(adapter=adapter,
+                                         advisor=PipelineChangeAdvisor(
+                                             task=Task(TaskTypesEnum.ts_forecasting)),
+                                         rules_for_constraint=DEFAULT_DAG_RULES)
+    successful_mutation_boosting = False
+    for _ in range(100):
+        graph_after_mutation = mutation(types=[boosting_mutation],
+                                        params=graph_params,
+                                        ind=Individual(linear_two_nodes),
+                                        requirements=composer_requirements,
+                                        log=default_log(__name__), max_depth=2).graph
+        if not successful_mutation_boosting:
+            successful_mutation_boosting = \
+                graph_after_mutation.root_node.descriptive_id == boosting_graph.root_node.descriptive_id
+        else:
+            break
+    assert successful_mutation_boosting
+
+    # check that obtained pipeline can be fitted
+    pipeline = PipelineAdapter().restore(graph_after_mutation)
+    data_train, data_test = get_ts_data()
+    pipeline.fit(data_train)
+    result = pipeline.predict(data_test)
+    assert result is not None
+
+
 def test_pipeline_adapters_params_correct():
     """ Checking the correct conversion of hyperparameters in nodes when nodes
     are passing through adapter
@@ -400,10 +472,8 @@ def test_pipeline_adapters_params_correct():
     # Convert into OptGraph object
     adapter = PipelineAdapter()
     opt_graph = adapter.adapt(pipeline)
-
     # Get Pipeline object back
     restored_pipeline = adapter.restore(opt_graph)
-
     # Get hyperparameter value after pipeline restoration
     restored_alpha = restored_pipeline.root_node.custom_params['alpha']
     assert np.isclose(init_alpha, restored_alpha)
@@ -433,3 +503,89 @@ def test_preds_before_and_after_convert_equal():
     restored_preds = restored_pipeline.predict(input_data)
 
     assert np.array_equal(init_preds.predict, restored_preds.predict)
+
+
+def test_crossover_with_single_node():
+    adapter = PipelineAdapter()
+    graph_example_first = adapter.adapt(generate_pipeline_with_single_node())
+    graph_example_second = adapter.adapt(generate_pipeline_with_single_node())
+    log = default_log(__name__)
+    graph_params = GraphGenerationParams(adapter=adapter, advisor=PipelineChangeAdvisor(),
+                                         rules_for_constraint=DEFAULT_DAG_RULES)
+
+    for crossover_type in CrossoverTypesEnum:
+        new_graphs = crossover([crossover_type], Individual(graph_example_first), Individual(graph_example_second),
+                               params=graph_params, max_depth=3, log=log, crossover_prob=1)
+
+        assert new_graphs[0].graph == graph_example_first
+        assert new_graphs[1].graph == graph_example_second
+
+
+def test_mutation_with_single_node():
+    adapter = PipelineAdapter()
+    graph = adapter.adapt(generate_pipeline_with_single_node())
+    task = Task(TaskTypesEnum.classification)
+    available_model_types, _ = OperationTypesRepository().suitable_operation(task_type=task.task_type)
+    composer_requirements = GPComposerRequirements(primary=available_model_types, secondary=available_model_types,
+                                                   max_arity=3, max_depth=3, pop_size=5, num_of_generations=4,
+                                                   crossover_prob=.8, mutation_prob=1)
+    new_graph = reduce_mutation(graph, composer_requirements)
+    assert graph == new_graph
+
+    new_graph = single_drop_mutation(graph)
+    assert graph == new_graph
+
+
+def test_no_opt_or_graph_nodes_after_mutation():
+    test_file_path = str(os.path.dirname(__file__))
+    test_log_file = os.path.join(test_file_path, 'test_no_opt_or_graph_nodes_after_mutation.log')
+    test_log = default_log('test_no_opt_or_graph_nodes_after_mutation',
+                           log_file=test_log_file)
+
+    adapter = PipelineAdapter(log=test_log)
+    graph = adapter.adapt(generate_pipeline_with_single_node())
+    task = Task(TaskTypesEnum.classification)
+    mutation_types = [MutationTypesEnum.growth]
+    mutation_prob = 1
+    available_model_types, _ = OperationTypesRepository().suitable_operation(task_type=task.task_type)
+    composer_requirements = GPComposerRequirements(primary=available_model_types, secondary=available_model_types,
+                                                   max_arity=3, max_depth=3, pop_size=5, num_of_generations=4,
+                                                   crossover_prob=.8, mutation_prob=1)
+    graph_params = GraphGenerationParams(adapter=adapter, advisor=PipelineChangeAdvisor(),
+                                         rules_for_constraint=DEFAULT_DAG_RULES)
+    _adapt_and_apply_mutations(new_graph=graph,
+                               mutation_prob=mutation_prob,
+                               types=mutation_types,
+                               num_mut=1,
+                               requirements=composer_requirements,
+                               params=graph_params,
+                               max_depth=2)
+
+    if os.path.exists(test_log_file):
+        with open(test_log_file, 'r') as file:
+            content = file.readlines()
+    release_log(logger=test_log, log_file=test_log_file)
+
+    # Is there a required message in the logs
+    assert not any('Unexpected: GraphNode found in PipelineAdapter instead' in log_message for log_message in content)
+    assert not any('Unexpected: OptNode found in PipelineAdapter instead' in log_message for log_message in content)
+
+
+def test_no_opt_or_graph_nodes_after_adapt_so_complex_graph():
+    test_file_path = str(os.path.dirname(__file__))
+    test_log_file = os.path.join(test_file_path, 'test_no_opt_in_complex_graph.log')
+    test_log = default_log('test_no_opt_in_complex_graph',
+                           log_file=test_log_file)
+
+    adapter = PipelineAdapter(log=test_log)
+    pipeline = generate_so_complex_pipeline()
+    adapter.adapt(pipeline)
+
+    if os.path.exists(test_log_file):
+        with open(test_log_file, 'r') as file:
+            content = file.readlines()
+
+    release_log(logger=test_log, log_file=test_log_file)
+    # Is there a required message in the logs
+    assert not any('Unexpected: GraphNode found in PipelineAdapter instead' in log_message for log_message in content)
+    assert not any('Unexpected: OptNode found in PipelineAdapter instead' in log_message for log_message in content)

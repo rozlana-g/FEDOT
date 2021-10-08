@@ -6,48 +6,68 @@ from typing import (Any, Callable, List, Tuple)
 from fedot.core.composer.constraint import constraint_function
 from fedot.core.optimisers.graph import OptGraph, OptNode
 from fedot.core.optimisers.utils.multi_objective_fitness import MultiObjFitness
+from fedot.core.utils import DEFAULT_PARAMS_STUB
 
-max_iters = 1000
+MAX_ITERS = 1000
 
 
-def random_graph(params, requirements, max_depth=None) -> Any:
+def random_graph(params, requirements, max_depth=None) -> OptGraph:
     max_depth = max_depth if max_depth else requirements.max_depth
-
-    def graph_growth(graph: Any, node_parent: Any):
-        offspring_size = randint(requirements.min_arity, requirements.max_arity)
-        for offspring_node in range(offspring_size):
-            height = graph.operator.distance_to_root_level(node_parent)
-            is_max_depth_exceeded = height >= max_depth - 1
-            is_primary_node_selected = height < max_depth - 1 and randint(0, 1)
-            if is_max_depth_exceeded or is_primary_node_selected:
-                primary_node = OptNode(nodes_from=None,
-                                       content={'name': choice(requirements.primary),
-                                                'params': 'default_params'})
-                node_parent.nodes_from.append(primary_node)
-                graph.add_node(primary_node)
-            else:
-                secondary_node = OptNode(nodes_from=[],
-                                         content={'name': choice(requirements.secondary),
-                                                  'params': 'default_params'})
-                graph.add_node(secondary_node)
-                node_parent.nodes_from.append(secondary_node)
-                graph_growth(graph, secondary_node)
-
     is_correct_graph = False
     graph = None
-    n_iters = 0
-    while not is_correct_graph or n_iters > max_iters:
+    n_iter = 0
+    requirements = modify_requirements(requirements)
+
+    while not is_correct_graph:
         graph = OptGraph()
         graph_root = OptNode(nodes_from=[],
                              content={'name': choice(requirements.secondary),
-                                      'params': 'default_params'})
+                                      'params': DEFAULT_PARAMS_STUB})
         graph.add_node(graph_root)
-        graph_growth(graph, graph_root)
+        graph_growth(graph, graph_root, requirements, max_depth)
         is_correct_graph = constraint_function(graph, params)
-        n_iters += 1
-        if n_iters > max_iters:
-            warnings.warn(f'Random_graph generation failed for {n_iters} iterations.')
+        n_iter += 1
+        if n_iter > MAX_ITERS:
+            warnings.warn(f'Random_graph generation failed for {n_iter} iterations.')
+            raise ValueError(f'Random_graph generation failed. Cannot find valid pipeline'
+                             f' with current params {params} and requirements {requirements}')
+
     return graph
+
+
+def modify_requirements(requirements):
+    """Function modify requirements if necessary.
+    Example: Graph with only one primary node should consists of only one primary node
+    without duplication, because this causes errors. Therefore minimum and maximum arity
+    become equal to one.
+    """
+    if len(requirements.primary) == 1 and requirements.max_arity > 1:
+        requirements.min_arity = requirements.max_arity = 1
+
+    return requirements
+
+
+def graph_growth(graph: OptGraph, node_parent: OptNode, requirements, max_depth: int):
+    """Function create a graph and links between nodes"""
+    offspring_size = randint(requirements.min_arity, requirements.max_arity)
+
+    for offspring_node in range(offspring_size):
+        height = graph.operator.distance_to_root_level(node_parent)
+        is_max_depth_exceeded = height >= max_depth - 1
+        is_primary_node_selected = height < max_depth - 1 and randint(0, 1)
+        if is_max_depth_exceeded or is_primary_node_selected:
+            primary_node = OptNode(nodes_from=None,
+                                   content={'name': choice(requirements.primary),
+                                            'params': DEFAULT_PARAMS_STUB})
+            node_parent.nodes_from.append(primary_node)
+            graph.add_node(primary_node)
+        else:
+            secondary_node = OptNode(nodes_from=[],
+                                     content={'name': choice(requirements.secondary),
+                                              'params': DEFAULT_PARAMS_STUB})
+            graph.add_node(secondary_node)
+            node_parent.nodes_from.append(secondary_node)
+            graph_growth(graph, secondary_node, requirements, max_depth)
 
 
 def equivalent_subtree(graph_first: Any, graph_second: Any) -> List[Tuple[Any, Any]]:
@@ -93,19 +113,19 @@ def evaluate_individuals(individuals_set, objective_function, graph_generation_p
                          is_multi_objective: bool, timer=None):
     num_of_successful_evals = 0
     reversed_set = individuals_set[::-1]
-    for ind_num, ind in enumerate(reversed_set):
-        ind.fitness = calculate_objective(ind.graph, objective_function, is_multi_objective, graph_generation_params)
-        if ind.fitness is None:
-            individuals_set.remove(ind)
-        else:
+    evaluated_individuals = []
+    for ind in reversed_set:
+        ind.fitness = calculate_objective(ind.graph, objective_function,
+                                          is_multi_objective, graph_generation_params)
+        if ind.fitness is not None:
             num_of_successful_evals += 1
-        if timer is not None and num_of_successful_evals:
+            evaluated_individuals.append(ind)
+        if timer is not None and num_of_successful_evals > 0:
             if timer.is_time_limit_reached():
-                for _ in range(0, len(individuals_set) - num_of_successful_evals):
-                    individuals_set.remove(individuals_set[0])
                 break
-    if len(individuals_set) == 0:
+    if len(evaluated_individuals) == 0:
         raise AttributeError('Too much fitness evaluation errors. Composing stopped.')
+    return evaluated_individuals
 
 
 def calculate_objective(graph: OptGraph, objective_function: Callable, is_multi_objective: bool,
